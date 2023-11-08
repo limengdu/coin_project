@@ -6,6 +6,10 @@
 #define DEBUG  1                     // 调试开关
 
 int countcoin = 0;                   // 投币计数
+const int DEBOUNCE_TIME = 50;        // 消抖时间
+
+TaskHandle_t ListenTask;             // FreeRTOS 任务，监听串口消息
+bool resetFlag = false;
 
 void setup() {
   // put your setup code here, to run once:
@@ -16,6 +20,16 @@ void setup() {
   pinMode(PRINT_BTN_PIN, INPUT_PULLUP);
   pinMode(RES_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(RES_PIN), resetDevice, FALLING);  // 按键中断
+
+  // 创建一个新任务来监听串口
+  xTaskCreate(
+    listenForFinish,    // 任务函数
+    "ListenForFinish",  // 任务名称
+    10000,              // 栈大小
+    NULL,               // 任务参数
+    1,                  // 任务优先级
+    &ListenTask         // 任务句柄
+  );
 }
 
 void ICACHE_RAM_ATTR resetDevice() {
@@ -24,39 +38,53 @@ void ICACHE_RAM_ATTR resetDevice() {
 
 void loop() {
   // put your main code here, to run repeatedly:
-  int coin_vol = digitalRead(COIN_PIN);
-  if(coin_vol != 0){
+  if (digitalRead(COIN_PIN) != 0) {
     countcoin++;
-    if(DEBUG)Serial.println(String(countcoin));
-    if(countcoin == 3){
+    resetFlag = false;
+    if (DEBUG) {
+      Serial.println(String(countcoin));
+    }
+    if (countcoin == 3) {
       Serial.println("start");
-      while(1){
-//        Serial.println(digitalRead(PHOTO_BTN_PIN));
-        if(digitalRead(PHOTO_BTN_PIN) == 0){             // 拍照按键消抖+按下判断
-          delay(50);
-          if(digitalRead(PHOTO_BTN_PIN) == 0){
-            delay(50);
-            if(digitalRead(PHOTO_BTN_PIN) == 0){
-              Serial.println("photo");
-              while(1){
-                if(digitalRead(PRINT_BTN_PIN) == 0){             // 打印按键消抖+按下判断
-                  delay(50);
-                  if(digitalRead(PRINT_BTN_PIN) == 0){
-                    delay(50);
-                    if(digitalRead(PRINT_BTN_PIN) == 0){
-                      Serial.println("print");
-                      break;
-                    }
-                  }
-                }
-              }
-              break;
-            }
-          }
+      if (waitForButton(PHOTO_BTN_PIN)) {
+        Serial.println("photo");
+        if (waitForButton(PRINT_BTN_PIN)) {
+          Serial.println("print");
+          countcoin = 0;                          // 归位，重新投币计算
         }
       }
-      countcoin = 0;                                     // 归位，重新投币计算
     }
   }
-  delay(20);                                             // 最短消抖时间，勿调
+  delay(20);   // 最短消抖时间，勿调
+}
+
+// 任务函数，用于监听串口
+void listenForFinish(void* parameter) {
+  while (1) {
+    if (Serial.available()) {
+      String input = Serial.readString();
+      input.trim();  // 去除可能的前后空格
+      if (input == "finish") {
+        Serial.println("finish");
+        countcoin = 0;
+        resetFlag = true;
+      }
+    }
+    vTaskDelay(100);  // 让出 CPU，使得其他任务可以运行
+  }
+}
+
+bool waitForButton(int pin) {
+  while (!resetFlag) {
+    if (digitalRead(pin) == 0) {
+      delay(DEBOUNCE_TIME);                              // 按键消抖+按下判断
+      if (digitalRead(pin) == 0) {
+        delay(DEBOUNCE_TIME);
+        if (digitalRead(pin) == 0) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
